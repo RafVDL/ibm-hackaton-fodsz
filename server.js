@@ -24,6 +24,10 @@ app.use(cors());
 
 mongoose.connect(process.env.MONGODB_URL, { useNewUrlParser: true });
 
+function generateRandomInteger(min, max) {
+  return Math.floor(min + Math.random() * (max + 1 - min))
+}
+
 function getPatient(id, request, response) {
   if (!fs.existsSync(path.resolve('db/patient' + id))) {
     response.status(404).json({
@@ -46,7 +50,7 @@ function getPatient(id, request, response) {
 
     Patient.findOne({ patient_id: id }).populate('clicks').exec(function (err, dbResult) {
       if (err) {
-        console.log("");
+        console.log("Error in looking up patient");
       } else if (!dbResult) {
         // patient not known in database
         let patient = new Patient({ patient_id: id });
@@ -88,9 +92,19 @@ function getPatient(id, request, response) {
         let keywords = {};
         // random description
         for (let keyword of body.keywords) {
+          let category = keyword.type;
+          let value = undefined;
+          switch (category) {
+            case "Medicatie":
+              value = keyword.text + ": " + generateRandomInteger(1, 20) + " mg";
+              break;
+            default:
+              value = "Year " + generateRandomInteger(2000, 2018) + ": " + keyword.text
+              break;
+          }
           keywords[keyword.text] = [{
             "data_type": "text",
-            "value": keyword.text
+            "value": value
           }];
         }
         return response.json({
@@ -149,7 +163,11 @@ app.post('/api/patient/:id', (request, response) => {
   // TODO: get motivation from service
   let id = ("0" + request.params.id).slice(-2);
   console.log("Saving scores for patient " + request.params.id + " ( " + request.body.score.length + " categories)");
-  Patient.findOneAndUpdate({ patient_id: id }, { score: request.body.score }, (err, result) => {
+  let score = 0;
+  for (let scoreI of request.body.score) {
+    score += scoreI.score;
+  }
+  Patient.findOneAndUpdate({ patient_id: id }, { score: request.body.score }).populate('clicks').exec((err, result) => {
     if (err)
       return response.status(500).json({
         "error": "failed to save patient"
@@ -158,15 +176,31 @@ app.post('/api/patient/:id', (request, response) => {
       return response.status(404).json({
         "error": "patient not found"
       })
-    console.log(result);
-    return response.json({
-      "message": "success",
-      "predicted_motivation": [
-        "Motivation 1",
-        "Motivation 2",
-        "Motivation 3"
-      ]
-    })
+
+    let keyword = undefined;
+
+    if (result.clicks && result.clicks.length > 0)
+      keyword = result.clicks[0].keyword
+
+    if (!keyword) {
+      return response.json({
+        "message": "success",
+        "predicted_motivation": [
+          "No evidence has been investigated. Cannot provide motivation"
+        ]
+      });
+    }
+
+    // get keywords for patient
+    unirest.get(process.env.KNOWLEDGE_URL + "/generateMotivation/" + keyword + "/" + score).header('Accept', 'javascript/json').end((dataResponse) => {
+      let body = JSON.parse(dataResponse.body);
+      return response.json({
+        "message": "success",
+        "predicted_motivation": [
+          body.message
+        ]
+      });
+    });
   });
 });
 
