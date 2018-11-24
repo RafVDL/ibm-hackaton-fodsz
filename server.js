@@ -22,6 +22,11 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
 app.use(cors());
+
+morgan.token('remote-addr', function (req, res) {
+  var ffHeaderValue = req.headers['x-forwarded-for'];
+  return ffHeaderValue || req.connection.remoteAddress;
+});
 app.use(morgan('short'));
 
 mongoose.connect(process.env.MONGODB_URL, { useNewUrlParser: true });
@@ -131,7 +136,7 @@ function getPatient(id, request, response) {
   });
 }
 
-const queue = [9, 30, 1, 3];
+const queue = [30, 9, 1, 3];
 let index = 0, iId = 0;
 
 let startRandomId = 9;
