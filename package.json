@@ -17,10 +17,12 @@
   "dependencies": {
     "@cloudant/cloudant": "^2.3.0",
     "body-parser": "^1.17.x",
+    "cors": "^2.8.5",
     "dotenv": "^4.0.0",
     "express": "^4.15.x",
     "find": "^0.2.9",
     "mongoose": "^5.3.13",
+    "unirest": "^0.5.1",
     "xml-js": "^1.6.8"
   },
   "author": "IBM Corp",

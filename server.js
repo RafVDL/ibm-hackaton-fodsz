@@ -6,6 +6,8 @@ const fs = require('fs');
 const path = require('path');
 const find = require('find');
 const mongoose = require('mongoose');
+const unirest = require('unirest');
+const cors = require('cors');
 require('dotenv').config();
 
 // models
@@ -17,6 +19,8 @@ app.use(bodyParser.urlencoded({ extended: false }));
 
 // parse application/json
 app.use(bodyParser.json());
+
+app.use(cors());
 
 mongoose.connect(process.env.MONGODB_URL, { useNewUrlParser: true });
 
@@ -64,58 +68,47 @@ function getPatient(id, request, response) {
       do {
         ++tagEnd;
       } while (tagEnd < xmlData.length && xmlData.substring(tagEnd - 5, tagEnd) != '</cd>')
-  
+
       // do {
       //   --tagStart;
       // } while (tagStart > 0 && xmlData.substring(tagStart, tagStart + 6) != '<item>')
       // do {
       //   ++tagEnd;
       // } while (tagEnd < xmlData.length && xmlData.substring(tagEnd - 7, tagEnd) != '</item>')
-  
+
       let tag = xml.xml2js(xmlData.substring(tagStart, tagEnd));
       let illness = tag.elements[0].attributes.DN;
-  
+
       if (!illness)
         illness = tag.elements[0].elements[0].text;
-  
-      return response.json({
-        "id": id,
-        "patient_info": {
-          "id": id,
-          "first_name": result.kmehrmessage.folder.patient.firstname._text,
-          "last_name": result.kmehrmessage.folder.patient.familyname._text,
-          "birthdate": result.kmehrmessage.folder.patient.birthdate.date._text,
-          "sex": result.kmehrmessage.folder.patient.sex.cd._text
-        },
-        "demand": "parking license",
-        "pathologies": [
-          illness
-        ],
-        "db": databaseResult,
-        "keywords": {
-          "prothese": [
-            {
-              "data_type": "text",
-              "value": "2007: Totale heupprothese links"
-            }
-          ],
-          "hypoxie": [{
+
+      // get keywords for patient
+      unirest.get(process.env.KNOWLEDGE_URL + "/getKeywords/" + id).header('Accept', 'javascript/json').end((dataResponse) => {
+        let body = JSON.parse(dataResponse.body);
+        let keywords = {};
+        // random description
+        for (let keyword of body.keywords) {
+          keywords[keyword.text] = [{
             "data_type": "text",
-            "value": "COPD GOLD III met emfyseem en bronchiëctasieën; reeds nachtelijke hypoxie in 2012 maar blijvende nicotine-abusus."
-          }],
-          "atelectase": [{
-            "data_type": "text",
-            "value": "Eind 2015 consultatie toegenomen hoesten en ook vermagering; CT thorax wat atelectase rechter MK."
-          }],
-          "exacerbatie": [{
-            "data_type": "text",
-            "value": "11-2016 COPD exacerbatie, sputumkweek: Moraxella en Haemofilus Influenzae\nR/ Augmentin"
-          }],
-          "pleuritis": [{
-            "data_type": "text",
-            "value": "Licht afgestompte longsinussen : sequelen pleuritis of lichtgradige hoeveelheid pleuravocht."
-          }]
+            "value": keyword.text
+          }];
         }
+        return response.json({
+          "id": id,
+          "patient_info": {
+            "id": id,
+            "first_name": result.kmehrmessage.folder.patient.firstname._text,
+            "last_name": result.kmehrmessage.folder.patient.familyname._text,
+            "birthdate": result.kmehrmessage.folder.patient.birthdate.date._text,
+            "sex": result.kmehrmessage.folder.patient.sex.cd._text
+          },
+          "demand": "parking license",
+          "pathologies": [
+            illness
+          ],
+          "db": databaseResult,
+          "keywords": keywords
+        });
       });
     });
   });
@@ -125,7 +118,25 @@ let startRandomId = 9;
 
 // get random patient
 app.get('/api/patient', (request, response) => {
-  let id = ("0" + startRandomId++).slice(-2);
+  let found = false;
+  let id;
+
+  do {
+    if (startRandomId > 31)
+      startRandomId = 1;
+
+    id = ("0" + startRandomId++).slice(-2)
+    found = fs.existsSync(path.resolve('db/patient' + id));
+  } while (!found);
+
+  if (!fs.existsSync(path.resolve('db/patient' + id))) {
+    response.status(404).json({
+      "error": "Patient not found"
+    });
+    console.log("Patient not found: " + id);
+    return;
+  }
+
   getPatient(id, request, response);
 });
 
@@ -134,7 +145,8 @@ app.get("/api/patient/:id", (request, response) => {
   getPatient(id, request, response);
 });
 
-app.put('/api/patient/:id', (request, response) => {
+app.post('/api/patient/:id', (request, response) => {
+  // TODO: get motivation from service
   let id = ("0" + request.params.id).slice(-2);
   console.log("Saving scores for patient " + request.params.id + " ( " + request.body.score.length + " categories)");
   Patient.findOneAndUpdate({ patient_id: id }, { score: request.body.score }, (err, result) => {
@@ -148,7 +160,12 @@ app.put('/api/patient/:id', (request, response) => {
       })
     console.log(result);
     return response.json({
-      "message": "success"
+      "message": "success",
+      "predicted_motivation": [
+        "Motivation 1",
+        "Motivation 2",
+        "Motivation 3"
+      ]
     })
   });
 });
@@ -174,7 +191,7 @@ app.post('/api/patient/:id/click', (request, response) => {
       return response.status(405).json({
         "error": "non existent"
       })
-    let click = new Click({ keyword: request.body.keyword});
+    let click = new Click({ keyword: request.body.keyword });
     click.save(function (err, result2) {
       if (err)
         return response.status(500).json({
@@ -193,6 +210,30 @@ app.post('/api/patient/:id/click', (request, response) => {
     });
   });
 });
+
+app.post('/api/patient/:id/done', (request, response) => {
+  let id = ("0" + request.params.id).slice(-2);
+  let data = {};
+  data.status = request.body.status;
+  if (request.body.status == "done") {
+    data.motivation = request.body.motivation;
+  }
+  Patient.findOneAndUpdate({ patient_id: id }, data).exec(function (err, result) {
+    if (err)
+      return response.status(500).json({
+        "error": "failed to add click"
+      })
+    if (!result)
+      return response.status(405).json({
+        "error": "non existent"
+      })
+    return response.json({
+      "message": "success"
+    });
+  });
+});
+
+app.use(express.static('public'));
 
 var port = process.env.PORT || 3000
 var db = mongoose.connection;

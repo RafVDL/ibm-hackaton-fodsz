@@ -8,5 +8,7 @@ module.exports = mongoose.model('Patient', {
     score: [{
         category: String,
         score: Number
-    }]
+    }],
+    status: String,
+    motivation: String
 });
