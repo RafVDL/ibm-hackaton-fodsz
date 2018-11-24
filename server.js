@@ -12,12 +12,6 @@ require('dotenv').config();
 const Patient = require('./model/Patient.model');
 const Click = require('./model/Click.model');
 
-let patientIds = [];
-fs.readdirSync('./db').forEach(file => {
-  if (file.isDirectory())
-    console.log(file);
-})
-
 // parse application/x-www-form-urlencoded
 app.use(bodyParser.urlencoded({ extended: false }));
 
