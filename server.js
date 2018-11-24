@@ -31,7 +31,7 @@ function getPatient(id, request, response) {
     response.status(404).json({
       "error": "Patient not found"
     });
-    console.log("Patient not found: " + request.params.id);
+    console.log("Patient not found: " + id);
     return;
   }
   find.file(/\.xml$/, __dirname + "/db/patient" + id, function (files) {
@@ -39,7 +39,7 @@ function getPatient(id, request, response) {
       response.status(404).json({
         "error": "Patient information not found"
       });
-      console.log("Patient information not found: " + request.params.id);
+      console.log("Patient information not found: " + id);
       return;
     }
     let xmlData = fs.readFileSync(files[0], 'utf8');
@@ -85,9 +85,9 @@ function getPatient(id, request, response) {
         illness = tag.elements[0].elements[0].text;
   
       return response.json({
-        "id": request.params.id,
+        "id": id,
         "patient_info": {
-          "id": request.params.id,
+          "id": id,
           "first_name": result.kmehrmessage.folder.patient.firstname._text,
           "last_name": result.kmehrmessage.folder.patient.familyname._text,
           "birthdate": result.kmehrmessage.folder.patient.birthdate.date._text,
