@@ -1,118 +1,216 @@
-var express = require("express");
-var app = express();
-var cfenv = require("cfenv");
-var bodyParser = require('body-parser')
+const express = require("express");
+const app = express();
+const bodyParser = require('body-parser');
+const xml = require('xml-js');
+const fs = require('fs');
+const path = require('path');
+const find = require('find');
+const mongoose = require('mongoose');
+require('dotenv').config();
+
+// models
+const Patient = require('./model/Patient.model');
+const Click = require('./model/Click.model');
+
+let patientIds = [];
+fs.readdirSync('./db').forEach(file => {
+  if (file.isDirectory())
+    console.log(file);
+})
 
 // parse application/x-www-form-urlencoded
-app.use(bodyParser.urlencoded({ extended: false }))
+app.use(bodyParser.urlencoded({ extended: false }));
 
 // parse application/json
-app.use(bodyParser.json())
+app.use(bodyParser.json());
 
-var cloudant, mydb;
+mongoose.connect(process.env.MONGODB_URL, { useNewUrlParser: true });
 
-/* Endpoint to greet and add a new visitor to database.
-* Send a POST request to localhost:3000/api/visitors with body
-* {
-* 	"name": "Bob"
-* }
-*/
-app.post("/api/visitors", function (request, response) {
-  var userName = request.body.name;
-  var doc = { "name" : userName };
-  if(!mydb) {
-    console.log("No database.");
-    response.send(doc);
+function getPatient(id, request, response) {
+  if (!fs.existsSync(path.resolve('db/patient' + id))) {
+    response.status(404).json({
+      "error": "Patient not found"
+    });
+    console.log("Patient not found: " + request.params.id);
     return;
   }
-  // insert the username as a document
-  mydb.insert(doc, function(err, body, header) {
-    if (err) {
-      console.log('[mydb.insert] ', err.message);
-      response.send("Error");
+  find.file(/\.xml$/, __dirname + "/db/patient" + id, function (files) {
+    if (files.length == 0) {
+      response.status(404).json({
+        "error": "Patient information not found"
+      });
+      console.log("Patient information not found: " + request.params.id);
       return;
     }
-    doc._id = body.id;
-    response.send(doc);
+    let xmlData = fs.readFileSync(files[0], 'utf8');
+    let result = xml.xml2js(xmlData, { compact: true });
+    let databaseResult = undefined;
+
+    Patient.findOne({ patient_id: id }).populate('clicks').exec(function (err, dbResult) {
+      if (err) {
+        console.log("");
+      } else if (!dbResult) {
+        // patient not known in database
+        let patient = new Patient({ patient_id: id });
+        patient.save(function (err, dbResult) {
+          if (err) {
+            console.log("Failed to initialize person");
+            console.log(err);
+          }
+        });
+      } else {
+        databaseResult = dbResult;
+      }
+
+      let occurrenceICD = xmlData.indexOf("S=\"ICD\"");
+      let tagStart = occurrenceICD, tagEnd = occurrenceICD;
+      do {
+        --tagStart;
+      } while (tagStart > 0 && xmlData.substring(tagStart, tagStart + 3) != '<cd')
+      do {
+        ++tagEnd;
+      } while (tagEnd < xmlData.length && xmlData.substring(tagEnd - 5, tagEnd) != '</cd>')
+  
+      // do {
+      //   --tagStart;
+      // } while (tagStart > 0 && xmlData.substring(tagStart, tagStart + 6) != '<item>')
+      // do {
+      //   ++tagEnd;
+      // } while (tagEnd < xmlData.length && xmlData.substring(tagEnd - 7, tagEnd) != '</item>')
+  
+      let tag = xml.xml2js(xmlData.substring(tagStart, tagEnd));
+      let illness = tag.elements[0].attributes.DN;
+  
+      if (!illness)
+        illness = tag.elements[0].elements[0].text;
+  
+      return response.json({
+        "id": request.params.id,
+        "patient_info": {
+          "id": request.params.id,
+          "first_name": result.kmehrmessage.folder.patient.firstname._text,
+          "last_name": result.kmehrmessage.folder.patient.familyname._text,
+          "birthdate": result.kmehrmessage.folder.patient.birthdate.date._text,
+          "sex": result.kmehrmessage.folder.patient.sex.cd._text
+        },
+        "demand": "parking license",
+        "pathologies": [
+          illness
+        ],
+        "db": databaseResult,
+        "keywords": {
+          "prothese": [
+            {
+              "data_type": "text",
+              "value": "2007: Totale heupprothese links"
+            }
+          ],
+          "hypoxie": [{
+            "data_type": "text",
+            "value": "COPD GOLD III met emfyseem en bronchiëctasieën; reeds nachtelijke hypoxie in 2012 maar blijvende nicotine-abusus."
+          }],
+          "atelectase": [{
+            "data_type": "text",
+            "value": "Eind 2015 consultatie toegenomen hoesten en ook vermagering; CT thorax wat atelectase rechter MK."
+          }],
+          "exacerbatie": [{
+            "data_type": "text",
+            "value": "11-2016 COPD exacerbatie, sputumkweek: Moraxella en Haemofilus Influenzae\nR/ Augmentin"
+          }],
+          "pleuritis": [{
+            "data_type": "text",
+            "value": "Licht afgestompte longsinussen : sequelen pleuritis of lichtgradige hoeveelheid pleuravocht."
+          }]
+        }
+      });
+    });
+  });
+}
+
+let startRandomId = 9;
+
+// get random patient
+app.get('/api/patient', (request, response) => {
+  let id = ("0" + startRandomId++).slice(-2);
+  getPatient(id, request, response);
+});
+
+app.get("/api/patient/:id", (request, response) => {
+  let id = ("0" + request.params.id).slice(-2);
+  getPatient(id, request, response);
+});
+
+app.put('/api/patient/:id', (request, response) => {
+  let id = ("0" + request.params.id).slice(-2);
+  console.log("Saving scores for patient " + request.params.id + " ( " + request.body.score.length + " categories)");
+  Patient.findOneAndUpdate({ patient_id: id }, { score: request.body.score }, (err, result) => {
+    if (err)
+      return response.status(500).json({
+        "error": "failed to save patient"
+      })
+    if (!result)
+      return response.status(404).json({
+        "error": "patient not found"
+      })
+    console.log(result);
+    return response.json({
+      "message": "success"
+    })
   });
 });
 
-/**
- * Endpoint to get a JSON array of all the visitors in the database
- * REST API example:
- * <code>
- * GET http://localhost:3000/api/visitors
- * </code>
- *
- * Response:
- * [ "Bob", "Jane" ]
- * @return An array of all the visitor names
- */
-app.get("/api/visitors", function (request, response) {
-  var names = [];
-  if(!mydb) {
-    response.json(names);
+app.post('/api/patient/:id/click', (request, response) => {
+  let id = ("0" + request.params.id).slice(-2);
+  if (!fs.existsSync(path.resolve('db/patient' + id))) {
+    response.status(404).json({
+      "error": "Patient not found"
+    });
+    console.log("Patient not found: " + request.params.id);
     return;
   }
 
-  mydb.list({ include_docs: true }, function(err, body) {
-    if (!err) {
-      body.rows.forEach(function(row) {
-        if(row.doc.name)
-          names.push(row.doc.name);
+  console.log("Captured click for patient " + id + ": " + request.body.keyword);
+
+  Patient.findOne({ patient_id: id }).populate('clicks').exec(function (err, result) {
+    if (err)
+      return response.status(500).json({
+        "error": "failed to add click"
+      })
+    if (!result)
+      return response.status(405).json({
+        "error": "non existent"
+      })
+    let click = new Click({ keyword: request.body.keyword});
+    click.save(function (err, result2) {
+      if (err)
+        return response.status(500).json({
+          "error": "failed to add click"
+        })
+      result.clicks.push(result2);
+      result.save(function (err, result) {
+        if (err)
+          return response.status(500).json({
+            "error": "failed to add click"
+          })
+        return response.json({
+          "message": "success"
+        })
       });
-      response.json(names);
-    }
+    });
   });
 });
 
-
-// load local VCAP configuration  and service credentials
-var vcapLocal;
-try {
-  vcapLocal = require('./vcap-local.json');
-  console.log("Loaded local VCAP", vcapLocal);
-} catch (e) { }
-
-const appEnvOpts = vcapLocal ? { vcap: vcapLocal} : {}
-
-const appEnv = cfenv.getAppEnv(appEnvOpts);
-
-// Load the Cloudant library.
-var Cloudant = require('@cloudant/cloudant');
-if (appEnv.services['cloudantNoSQLDB'] || appEnv.getService(/cloudant/)) {
-
-  // Initialize database with credentials
-  if (appEnv.services['cloudantNoSQLDB']) {
-    // CF service named 'cloudantNoSQLDB'
-    cloudant = Cloudant(appEnv.services['cloudantNoSQLDB'][0].credentials);
-  } else {
-     // user-provided service with 'cloudant' in its name
-     cloudant = Cloudant(appEnv.getService(/cloudant/).credentials);
-  }
-} else if (process.env.CLOUDANT_URL){
-  cloudant = Cloudant(process.env.CLOUDANT_URL);
-}
-if(cloudant) {
-  //database name
-  var dbName = 'mydb';
-
-  // Create a new "mydb" database.
-  cloudant.db.create(dbName, function(err, data) {
-    if(!err) //err if database doesn't already exists
-      console.log("Created database: " + dbName);
-  });
-
-  // Specify the database we are going to use (mydb)...
-  mydb = cloudant.db.use(dbName);
-}
-
-//serve static file (index.html, images, css)
-app.use(express.static(__dirname + '/views'));
-
-
-
 var port = process.env.PORT || 3000
-app.listen(port, function() {
+var db = mongoose.connection;
+db.on('error', console.error.bind(console, 'connection error:'));
+db.once('open', function () {
+  Click.deleteMany({}, (err, result) => {
+    console.log("Deleted clicks");
+  });
+  Patient.deleteMany({}, (err, result) => {
+    console.log("Deleted patients");
+  });
+  app.listen(port, function () {
     console.log("To view your app, open this link in your browser: http://localhost:" + port);
+  });
 });
