@@ -8,6 +8,7 @@ const find = require('find');
 const mongoose = require('mongoose');
 const unirest = require('unirest');
 const cors = require('cors');
+const morgan = require('morgan');
 require('dotenv').config();
 
 // models
@@ -21,6 +22,7 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
 app.use(cors());
+app.use(morgan('short'));
 
 mongoose.connect(process.env.MONGODB_URL, { useNewUrlParser: true });
 
@@ -114,7 +116,8 @@ function getPatient(id, request, response) {
             "first_name": result.kmehrmessage.folder.patient.firstname._text,
             "last_name": result.kmehrmessage.folder.patient.familyname._text,
             "birthdate": result.kmehrmessage.folder.patient.birthdate.date._text,
-            "sex": result.kmehrmessage.folder.patient.sex.cd._text
+            "sex": result.kmehrmessage.folder.patient.sex.cd._text,
+            "job": "retired"
           },
           "demand": "parking license",
           "pathologies": [
@@ -128,6 +131,9 @@ function getPatient(id, request, response) {
   });
 }
 
+const queue = [9, 30, 1, 3];
+let index = 0, iId = 0;
+
 let startRandomId = 9;
 
 // get random patient
@@ -136,10 +142,15 @@ app.get('/api/patient', (request, response) => {
   let id;
 
   do {
-    if (startRandomId > 31)
-      startRandomId = 1;
+    if (index >= queue.length) {
+      iId = startRandomId;
+      if (startRandomId > 31)
+        startRandomId = 1;
+    } else {
+      iId = queue[index++];
+    }
 
-    id = ("0" + startRandomId++).slice(-2)
+    id = ("0" + iId++).slice(-2)
     found = fs.existsSync(path.resolve('db/patient' + id));
   } while (!found);
 
