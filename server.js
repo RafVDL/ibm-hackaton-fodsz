@@ -148,9 +148,9 @@ app.get('/api/patient', (request, response) => {
 
   do {
     if (index >= queue.length) {
-      iId = startRandomId;
+      iId = startRandomId++;
       if (startRandomId > 31)
-        startRandomId = 1;
+        iId = startRandomId = 1;
     } else {
       iId = queue[index++];
     }
